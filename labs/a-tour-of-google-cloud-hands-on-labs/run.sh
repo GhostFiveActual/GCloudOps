@@ -10,7 +10,9 @@ if [[ -z "$PROJECT_ID" ]]; then
 fi
 
 if [[ -z "$USER2_EMAIL" ]]; then
-  read -p "Paste User 2 email from the lab panel: " USER2_EMAIL
+  echo "Usage:"
+  echo "curl -fsSL https://raw.githubusercontent.com/GhostFiveActual/GCloudOps/master/labs/a-tour-of-google-cloud-hands-on-labs/run.sh | bash -s -- USER2_EMAIL"
+  exit 1
 fi
 
 echo "Project: $PROJECT_ID"
@@ -26,4 +28,4 @@ gcloud services enable dialogflow.googleapis.com \
   --quiet
 
 echo "Automation complete."
-echo "Run verification or click Check my progress."
+echo "Click Check my progress."
