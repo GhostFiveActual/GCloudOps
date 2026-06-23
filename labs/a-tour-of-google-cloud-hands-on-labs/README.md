@@ -26,4 +26,4 @@ The following automation was tested successfully in Google Cloud Shell:
 ## Run with Curl
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/GhostFiveActual/GCloudOps/main/labs/a-tour-of-google-cloud-hands-on-labs/run.sh | bash
+curl -fsSL https://raw.githubusercontent.com/GhostFiveActual/GCloudOps/master/labs/a-tour-of-google-cloud-hands-on-labs/run.sh | bash
