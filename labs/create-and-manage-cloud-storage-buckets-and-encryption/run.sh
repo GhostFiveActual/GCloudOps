@@ -17,6 +17,28 @@ BUCKET_NAME="storecore-${PROJECT_ID##*-}"
 STATE_FILE="$HOME/.gcloudops-cloud-storage-state"
 BOTO_FILE="$HOME/.boto"
 
+write_boto() {
+  local encryption_key="${1:-}"
+  local decryption_key="${2:-}"
+
+  cat > "$BOTO_FILE" <<EOF_BOTO
+[Credentials]
+
+[Boto]
+
+[GSUtil]
+default_project_id = ${PROJECT_ID}
+EOF_BOTO
+
+  if [[ -n "$decryption_key" ]]; then
+    echo "decryption_key1 = ${decryption_key}" >> "$BOTO_FILE"
+  fi
+
+  if [[ -n "$encryption_key" ]]; then
+    echo "encryption_key = ${encryption_key}" >> "$BOTO_FILE"
+  fi
+}
+
 echo "Project: $PROJECT_ID"
 echo "Region: $REGION"
 echo "Bucket: $BUCKET_NAME"
@@ -39,9 +61,7 @@ gcloud storage buckets create "gs://${BUCKET_NAME}" \
 
 export BUCKET_NAME_1="$BUCKET_NAME"
 
-curl -fsSL \
-  https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-common/ClusterSetup.html \
-  -o setup.html
+curl -fsSL https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-common/ClusterSetup.html -o setup.html
 
 cp setup.html setup2.html
 cp setup.html setup3.html
@@ -50,8 +70,7 @@ gcloud storage cp setup.html "gs://${BUCKET_NAME_1}/"
 
 gcloud storage objects get-iam-policy "gs://${BUCKET_NAME_1}/setup.html" > acl.txt || true
 
-gcloud storage objects update "gs://${BUCKET_NAME_1}/setup.html" \
-  --predefined-acl=private
+gcloud storage objects update "gs://${BUCKET_NAME_1}/setup.html" --predefined-acl=private
 
 gcloud storage objects get-iam-policy "gs://${BUCKET_NAME_1}/setup.html" > acl2.txt || true
 
@@ -81,13 +100,8 @@ OLD_KEY=$OLD_KEY
 NEW_KEY=$NEW_KEY
 STATE
 
-cp "$BOTO_FILE" "$HOME/.boto.gcloudops.original" 2>/dev/null || true
-
-cat > "$BOTO_FILE" <<EOF_BOTO
-[GSUtil]
-default_project_id = ${PROJECT_ID}
-encryption_key = ${OLD_KEY}
-EOF_BOTO
+rm -f "$BOTO_FILE"
+write_boto "$OLD_KEY" ""
 
 gsutil kms encryption -d "gs://${BUCKET_NAME_1}" || true
 gsutil cp setup2.html "gs://${BUCKET_NAME_1}/"
@@ -96,20 +110,11 @@ gsutil cp setup3.html "gs://${BUCKET_NAME_1}/"
 rm -f setup*
 gsutil cp "gs://${BUCKET_NAME_1}/setup*" ./
 
-cat > "$BOTO_FILE" <<EOF_BOTO
-[GSUtil]
-default_project_id = ${PROJECT_ID}
-decryption_key1 = ${OLD_KEY}
-encryption_key = ${NEW_KEY}
-EOF_BOTO
+write_boto "$NEW_KEY" "$OLD_KEY"
 
 gsutil rewrite -k "gs://${BUCKET_NAME_1}/setup2.html"
 
-cat > "$BOTO_FILE" <<EOF_BOTO
-[GSUtil]
-default_project_id = ${PROJECT_ID}
-encryption_key = ${NEW_KEY}
-EOF_BOTO
+write_boto "$NEW_KEY" ""
 
 gsutil cp "gs://${BUCKET_NAME_1}/setup2.html" recover2.html
 
@@ -133,14 +138,10 @@ cat > life.json <<'JSON'
 }
 JSON
 
-gcloud storage buckets update "gs://${BUCKET_NAME_1}" \
-  --lifecycle-file=life.json
-
+gcloud storage buckets update "gs://${BUCKET_NAME_1}" --lifecycle-file=life.json
 gcloud storage buckets update "gs://${BUCKET_NAME_1}" --versioning
 
-curl -fsSL \
-  https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-common/ClusterSetup.html \
-  -o setup.html
+curl -fsSL https://hadoop.apache.org/docs/current/hadoop-project-dist/hadoop-common/ClusterSetup.html -o setup.html
 
 gcloud storage cp -v setup.html "gs://${BUCKET_NAME_1}/"
 
