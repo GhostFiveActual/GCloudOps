@@ -30,7 +30,19 @@ fi
 
 BUCKET_NAME="${PROJECT_ID}-gcloudops-iam"
 SERVICE_ACCOUNT_NAME="read-bucket-objects"
-SERVICE_ACCOUNT_EMAIL="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+SERVICE_ACCOUNT_EMAIL=$(gcloud iam service-accounts list \
+  --project="$PROJECT_ID" \
+  --filter="email:${SERVICE_ACCOUNT_NAME}" \
+  --format="value(email)" \
+  --limit=1)
+
+if [[ -z "$SERVICE_ACCOUNT_EMAIL" ]]; then
+  echo "Could not find service account email."
+  exit 1
+fi
+
+echo "Service account email: $SERVICE_ACCOUNT_EMAIL"
+
 VM_NAME="demoiam"
 
 echo
