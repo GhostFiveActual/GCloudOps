@@ -2,37 +2,28 @@
 set -euo pipefail
 
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
-BUCKET_NAME="${PROJECT_ID}-storage-lab"
+
+BUCKET_NAME=$(gcloud storage buckets list \
+  --project="$PROJECT_ID" \
+  --format="value(name)" \
+  --filter="name:${PROJECT_ID}-storage-lab" \
+  --limit=1)
+
+if [[ -z "$BUCKET_NAME" ]]; then
+  echo "No GCloudOps storage lab bucket found."
+  echo
+  echo "Existing buckets:"
+  gcloud storage buckets list --project="$PROJECT_ID"
+  echo
+  echo "Run:"
+  echo "curl -fsSL https://raw.githubusercontent.com/GhostFiveActual/GCloudOps/master/labs/cloud-storage/run.sh | bash"
+  exit 1
+fi
 
 echo "Project: $PROJECT_ID"
 echo "Bucket: gs://${BUCKET_NAME}"
 echo
 
-echo "Bucket details:"
-gcloud storage buckets describe "gs://${BUCKET_NAME}" \
-  --format="table(name,location,uniform_bucket_level_access,public_access_prevention)"
-
+gcloud storage buckets describe "gs://${BUCKET_NAME}"
 echo
-echo "Objects:"
 gcloud storage ls -a "gs://${BUCKET_NAME}"
-
-echo
-echo "setup.html IAM policy:"
-gcloud storage objects get-iam-policy "gs://${BUCKET_NAME}/setup.html" || true
-
-echo
-echo "Lifecycle:"
-gcloud storage buckets describe "gs://${BUCKET_NAME}" \
-  --format="json(lifecycle_config)"
-
-echo
-echo "Versioning:"
-gcloud storage buckets describe "gs://${BUCKET_NAME}" \
-  --format="json(versioning_enabled)"
-
-echo
-echo "Recursive sync check:"
-gcloud storage ls -r "gs://${BUCKET_NAME}/firstlevel" || true
-
-echo
-echo "Verification complete."
