@@ -178,12 +178,9 @@ write_boto_keys "$OLD_KEY" "$NEW_KEY" "newonly"
 
 gsutil cp "gs://${BUCKET_NAME_1}/setup2.html" recover2.html
 
-set +e
-gsutil cp "gs://${BUCKET_NAME_1}/setup3.html" recover3.html
-SETUP3_RESULT=$?
-set -e
-
-if [[ "$SETUP3_RESULT" -ne 0 ]]; then
+if gsutil cp "gs://${BUCKET_NAME_1}/setup3.html" recover3.html >/tmp/gcloudops-setup3.log 2>&1; then
+  echo "Warning: setup3.html downloaded successfully, but it was expected to fail."
+else
   echo "Expected: setup3.html failed because it was not rewritten with the new key."
 fi
 
