@@ -30,19 +30,6 @@ fi
 
 BUCKET_NAME="${PROJECT_ID}-gcloudops-iam"
 SERVICE_ACCOUNT_NAME="read-bucket-objects"
-SERVICE_ACCOUNT_EMAIL=$(gcloud iam service-accounts list \
-  --project="$PROJECT_ID" \
-  --filter="email:${SERVICE_ACCOUNT_NAME}" \
-  --format="value(email)" \
-  --limit=1)
-
-if [[ -z "$SERVICE_ACCOUNT_EMAIL" ]]; then
-  echo "Could not find service account email."
-  exit 1
-fi
-
-echo "Service account email: $SERVICE_ACCOUNT_EMAIL"
-
 VM_NAME="demoiam"
 
 echo
@@ -55,14 +42,14 @@ gcloud services enable \
   --quiet
 
 echo
-echo "Creating Cloud Storage bucket..."
+echo "Creating bucket..."
 gcloud storage buckets create "gs://${BUCKET_NAME}" \
   --project="$PROJECT_ID" \
   --location=US \
   --uniform-bucket-level-access \
   --quiet || true
 
-echo "Creating sample file..."
+echo "Creating sample.txt..."
 echo "Hello from GCloudOps IAM automation." > sample.txt
 
 echo "Uploading sample.txt..."
@@ -89,6 +76,21 @@ gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" \
   --project="$PROJECT_ID" \
   --quiet || true
 
+sleep 10
+
+SERVICE_ACCOUNT_EMAIL=$(gcloud iam service-accounts list \
+  --project="$PROJECT_ID" \
+  --filter="email~${SERVICE_ACCOUNT_NAME}" \
+  --format="value(email)" \
+  --limit=1)
+
+if [[ -z "$SERVICE_ACCOUNT_EMAIL" ]]; then
+  echo "Could not find service account email."
+  exit 1
+fi
+
+echo "Service account email: $SERVICE_ACCOUNT_EMAIL"
+
 echo
 echo "Granting service account Storage Object Viewer..."
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
@@ -112,6 +114,15 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --quiet || true
 
 echo
+echo "Creating SSH firewall rule..."
+gcloud compute firewall-rules create allow-ssh-gcloudops \
+  --project="$PROJECT_ID" \
+  --allow=tcp:22 \
+  --source-ranges=0.0.0.0/0 \
+  --description="Allow SSH for GCloudOps lab automation" \
+  --quiet || true
+
+echo
 echo "Creating VM with service account..."
 gcloud compute instances create "$VM_NAME" \
   --project="$PROJECT_ID" \
@@ -122,6 +133,32 @@ gcloud compute instances create "$VM_NAME" \
   --service-account="$SERVICE_ACCOUNT_EMAIL" \
   --scopes=https://www.googleapis.com/auth/devstorage.read_write \
   --quiet || true
+
+echo
+echo "Waiting for SSH to become available..."
+
+SSH_READY=false
+
+for i in {1..18}; do
+  if gcloud compute ssh "$VM_NAME" \
+    --project="$PROJECT_ID" \
+    --zone="$ZONE" \
+    --quiet \
+    --command="echo SSH ready" >/dev/null 2>&1; then
+    SSH_READY=true
+    echo "SSH is ready."
+    break
+  fi
+
+  echo "SSH not ready yet. Waiting 10 seconds..."
+  sleep 10
+done
+
+if [[ "$SSH_READY" != "true" ]]; then
+  echo "SSH did not become ready in time."
+  echo "Try running the verify script after 1-2 minutes."
+  exit 1
+fi
 
 echo
 echo "Testing read access from VM service account..."
@@ -159,6 +196,10 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SERVICE_ACCOUNT_EMAIL}" \
   --role="roles/storage.objectCreator" \
   --quiet
+
+echo
+echo "Waiting 15 seconds for IAM propagation..."
+sleep 15
 
 echo
 echo "Testing write access after role change..."
