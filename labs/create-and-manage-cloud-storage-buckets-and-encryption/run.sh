@@ -17,16 +17,6 @@ fi
 
 BUCKET_NAME="storecore-${PROJECT_ID##*-}"
 
-echo "Project: $PROJECT_ID"
-echo "Region: $REGION"
-echo "Bucket: $BUCKET_NAME"
-
-cat > "$STATE_FILE" <<STATE
-PROJECT_ID=$PROJECT_ID
-REGION=$REGION
-BUCKET_NAME=$BUCKET_NAME
-STATE
-
 write_boto_keys() {
   local old_key="${1:-}"
   local new_key="${2:-}"
@@ -51,13 +41,10 @@ if "[GSUtil]" not in text:
 
 lines = text.splitlines()
 
-def remove_keys(lines):
-    return [
-        l for l in lines
-        if not re.match(r"\s*#?\s*(encryption_key|decryption_key1)\s*=", l)
-    ]
-
-lines = remove_keys(lines)
+lines = [
+    l for l in lines
+    if not re.match(r"\s*#?\s*(encryption_key|decryption_key1)\s*=", l)
+]
 
 out = []
 inserted = False
@@ -88,7 +75,17 @@ path.write_text("\n".join(out) + "\n")
 PY
 }
 
+echo "Project: $PROJECT_ID"
+echo "Region: $REGION"
+echo "Bucket: $BUCKET_NAME"
 echo
+
+cat > "$STATE_FILE" <<STATE
+PROJECT_ID=$PROJECT_ID
+REGION=$REGION
+BUCKET_NAME=$BUCKET_NAME
+STATE
+
 echo "Enabling Storage API..."
 gcloud services enable storage.googleapis.com --project="$PROJECT_ID" --quiet
 
@@ -163,6 +160,16 @@ gsutil cp setup2.html "gs://${BUCKET_NAME_1}/"
 gsutil cp setup3.html "gs://${BUCKET_NAME_1}/"
 
 echo
+echo "Verifying CSEK encryption metadata..."
+gsutil stat "gs://${BUCKET_NAME_1}/setup2.html" | grep -E "Encryption algorithm|Encryption key SHA256" || true
+gsutil stat "gs://${BUCKET_NAME_1}/setup3.html" | grep -E "Encryption algorithm|Encryption key SHA256" || true
+
+echo
+echo "CSEK upload complete."
+echo "Click Check my progress for: Customer-supplied encryption keys."
+read -r -p "Press ENTER after the CSEK checkpoint passes..." _ < /dev/tty
+
+echo
 echo "Testing encrypted download..."
 rm -f setup*
 gsutil cp "gs://${BUCKET_NAME_1}/setup*" ./
@@ -234,4 +241,4 @@ echo "Automation complete."
 echo "Bucket: gs://${BUCKET_NAME_1}"
 echo "State file: $STATE_FILE"
 echo
-echo "Click Check my progress for each objective."
+echo "Click any remaining Check my progress buttons."
