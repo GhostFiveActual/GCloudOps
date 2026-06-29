@@ -86,11 +86,11 @@ gcloud sql instances create "$INSTANCE_NAME" \
   --storage-size=10GB \
   --region="$REGION" \
   --availability-type=ZONAL \
-  --zone="$ZONE" \
+  --gce-zone="$ZONE" \
   --root-password="$ROOT_PASSWORD" \
   --network=default \
   --no-assign-ip \
-  --require-ssl=false \
+  --authorized-networks=0.0.0.0/0 \
   --quiet || true
 
 echo
@@ -137,7 +137,7 @@ echo
 echo "Configuring Cloud SQL proxy on $PROXY_VM..."
 gcloud compute ssh "$PROXY_VM" \
   --project="$PROJECT_ID" \
-  --zone="$ZONE" \
+  --gce-zone="$ZONE" \
   --quiet \
   --command="
     set -e
@@ -153,18 +153,18 @@ echo
 echo "Testing proxy listener on $PROXY_VM..."
 gcloud compute ssh "$PROXY_VM" \
   --project="$PROJECT_ID" \
-  --zone="$ZONE" \
+  --gce-zone="$ZONE" \
   --quiet \
   --command="ss -ltnp | grep 3306 || true"
 
 PROXY_EXTERNAL_IP=$(gcloud compute instances describe "$PROXY_VM" \
   --project="$PROJECT_ID" \
-  --zone="$ZONE" \
+  --gce-zone="$ZONE" \
   --format="value(networkInterfaces[0].accessConfigs[0].natIP)")
 
 PRIVATE_EXTERNAL_IP=$(gcloud compute instances describe "$PRIVATE_VM" \
   --project="$PROJECT_ID" \
-  --zone="$ZONE" \
+  --gce-zone="$ZONE" \
   --format="value(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || true)
 
 cat >> "$STATE_FILE" <<STATE
