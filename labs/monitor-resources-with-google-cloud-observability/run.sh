@@ -13,25 +13,38 @@ if [[ -z "$EMAIL" ]]; then
   read -r -p "Enter notification email: " EMAIL < /dev/tty
 fi
 
+TOKEN=$(gcloud auth print-access-token)
+BASE="https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}"
+
+api_post() {
+  local url="$1"
+  local file="$2"
+  curl -sS -X POST \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d @"$file" \
+    "$url"
+}
+
 echo "Project: $PROJECT_ID"
 echo "Email: $EMAIL"
 
-gcloud services enable monitoring.googleapis.com \
-  --project="$PROJECT_ID" \
-  --quiet
+gcloud services enable monitoring.googleapis.com --project="$PROJECT_ID" --quiet
 
 echo
-echo "Verifying nginx VMs..."
+echo "VMs:"
 gcloud compute instances list \
   --filter="name~nginxstack" \
   --format="table(name,zone.basename(),status,networkInterfaces[0].accessConfigs[0].natIP)"
 
 echo
 echo "Creating dashboard..."
+
 cat > dashboard.json <<'JSON'
 {
   "displayName": "My Dashboard",
   "gridLayout": {
+    "columns": "1",
     "widgets": [
       {
         "title": "My Chart",
@@ -40,7 +53,7 @@ cat > dashboard.json <<'JSON'
             {
               "timeSeriesQuery": {
                 "timeSeriesFilter": {
-                  "filter": "metric.type=\"compute.googleapis.com/instance/cpu/utilization\" resource.type=\"gce_instance\"",
+                  "filter": "resource.type=\"gce_instance\" AND metric.type=\"compute.googleapis.com/instance/cpu/utilization\"",
                   "aggregation": {
                     "alignmentPeriod": "60s",
                     "perSeriesAligner": "ALIGN_MEAN"
@@ -50,7 +63,6 @@ cat > dashboard.json <<'JSON'
               "plotType": "LINE"
             }
           ],
-          "timeshiftDuration": "0s",
           "yAxis": {
             "label": "CPU utilization",
             "scale": "LINEAR"
@@ -67,7 +79,12 @@ gcloud monitoring dashboards create \
   --config-from-file=dashboard.json || true
 
 echo
-echo "Creating email notification channel..."
+echo "CHECKPOINT: Click Check my progress for custom dashboard."
+read -r -p "Press ENTER to continue..." _ < /dev/tty
+
+echo
+echo "Creating notification channel..."
+
 cat > channel.json <<EOF_JSON
 {
   "type": "email",
@@ -79,23 +96,18 @@ cat > channel.json <<EOF_JSON
 }
 EOF_JSON
 
-CHANNEL_NAME=$(gcloud alpha monitoring channels create \
-  --project="$PROJECT_ID" \
-  --channel-content-from-file=channel.json \
-  --format="value(name)" 2>/dev/null || true)
+CHANNEL_NAME=$(api_post "${BASE}/notificationChannels" channel.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))')
 
 if [[ -z "$CHANNEL_NAME" ]]; then
-  CHANNEL_NAME=$(gcloud alpha monitoring channels list \
-    --project="$PROJECT_ID" \
-    --filter='displayName="GCloudOps Email"' \
-    --format="value(name)" \
-    --limit=1)
+  echo "Failed to create notification channel."
+  exit 1
 fi
 
 echo "Channel: $CHANNEL_NAME"
 
 echo
-echo "Creating alerting policy..."
+echo "Creating alert policy..."
+
 cat > alert-policy.json <<EOF_JSON
 {
   "displayName": "My Alert Policy",
@@ -115,10 +127,7 @@ cat > alert-policy.json <<EOF_JSON
             "alignmentPeriod": "60s",
             "perSeriesAligner": "ALIGN_RATE"
           }
-        ],
-        "trigger": {
-          "count": 1
-        }
+        ]
       }
     },
     {
@@ -133,22 +142,23 @@ cat > alert-policy.json <<EOF_JSON
             "alignmentPeriod": "60s",
             "perSeriesAligner": "ALIGN_MEAN"
           }
-        ],
-        "trigger": {
-          "count": 1
-        }
+        ]
       }
     }
   ]
 }
 EOF_JSON
 
-gcloud alpha monitoring policies create \
-  --project="$PROJECT_ID" \
-  --policy-from-file=alert-policy.json || true
+api_post "${BASE}/alertPolicies" alert-policy.json >/tmp/gcloudops-alert.json
+cat /tmp/gcloudops-alert.json
 
 echo
-echo "Creating Monitoring group..."
+echo "CHECKPOINT: Click Check my progress for alerting policies."
+read -r -p "Press ENTER to continue..." _ < /dev/tty
+
+echo
+echo "Creating resource group..."
+
 cat > group.json <<'JSON'
 {
   "displayName": "VM instances",
@@ -156,34 +166,32 @@ cat > group.json <<'JSON'
 }
 JSON
 
-GROUP_NAME=$(gcloud alpha monitoring groups create \
-  --project="$PROJECT_ID" \
-  --group-content-from-file=group.json \
-  --format="value(name)" 2>/dev/null || true)
+GROUP_NAME=$(api_post "${BASE}/groups" group.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))')
 
 if [[ -z "$GROUP_NAME" ]]; then
-  GROUP_NAME=$(gcloud alpha monitoring groups list \
-    --project="$PROJECT_ID" \
-    --filter='displayName="VM instances"' \
-    --format="value(name)" \
-    --limit=1)
+  echo "Failed to create group."
+  exit 1
 fi
 
+GROUP_ID="${GROUP_NAME##*/}"
 echo "Group: $GROUP_NAME"
+echo "Group ID: $GROUP_ID"
+
+echo
+echo "CHECKPOINT: Click Check my progress for resource groups."
+read -r -p "Press ENTER to continue..." _ < /dev/tty
 
 echo
 echo "Creating uptime check..."
-cat > uptime-check.json <<EOF_JSON
+
+cat > uptime.json <<EOF_JSON
 {
   "displayName": "My Uptime check",
-  "timeout": "10s",
   "period": "60s",
-  "monitoredResource": {
-    "type": "uptime_url",
-    "labels": {
-      "project_id": "$PROJECT_ID",
-      "host": "example.com"
-    }
+  "timeout": "10s",
+  "resourceGroup": {
+    "groupId": "$GROUP_ID",
+    "resourceType": "INSTANCE"
   },
   "httpCheck": {
     "path": "/",
@@ -194,10 +202,30 @@ cat > uptime-check.json <<EOF_JSON
 }
 EOF_JSON
 
-gcloud monitoring uptime create \
-  --project="$PROJECT_ID" \
-  --config-from-file=uptime-check.json || true
+api_post "${BASE}/uptimeCheckConfigs" uptime.json >/tmp/gcloudops-uptime.json
+cat /tmp/gcloudops-uptime.json
+
+echo
+echo "CHECKPOINT: Wait 1-2 minutes, then click Check my progress for uptime check."
+read -r -p "Press ENTER to disable alert policy..." _ < /dev/tty
+
+POLICY_NAME=$(python3 -c 'import json; print(json.load(open("/tmp/gcloudops-alert.json")).get("name",""))')
+
+if [[ -n "$POLICY_NAME" ]]; then
+  cat > disable-alert.json <<EOF_JSON
+{
+  "enabled": false
+}
+EOF_JSON
+
+  curl -sS -X PATCH \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d @disable-alert.json \
+    "https://monitoring.googleapis.com/v3/${POLICY_NAME}?updateMask=enabled" >/tmp/gcloudops-alert-disabled.json
+
+  echo "Alert disabled."
+fi
 
 echo
 echo "Automation complete."
-echo "Click all Check my progress buttons."
