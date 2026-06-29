@@ -17,7 +17,7 @@ echo "Table: $TABLE"
 echo
 
 echo "Datasets:"
-bq ls "$PROJECT_ID" || true
+bq ls --project_id="$PROJECT_ID" || true
 
 echo
 echo "Table:"
