@@ -127,7 +127,7 @@ SQL_CONNECTION_NAME=$(gcloud sql instances describe "$INSTANCE_NAME" \
 
 SQL_PRIVATE_IP=$(gcloud sql instances describe "$INSTANCE_NAME" \
   --project="$PROJECT_ID" \
-  --format="value(ipAddresses.filter(type=PRIVATE).ipAddress)")
+  --format=json | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next((i["ipAddress"] for i in data.get("ipAddresses",[]) if i.get("type")=="PRIVATE"), ""))')
 
 cat >> "$STATE_FILE" <<STATE
 SQL_CONNECTION_NAME=$SQL_CONNECTION_NAME
