@@ -79,13 +79,13 @@ cat > channel.json <<EOF_JSON
 }
 EOF_JSON
 
-CHANNEL_NAME=$(gcloud monitoring channels create \
+CHANNEL_NAME=$(gcloud alpha monitoring channels create \
   --project="$PROJECT_ID" \
   --channel-content-from-file=channel.json \
   --format="value(name)" 2>/dev/null || true)
 
 if [[ -z "$CHANNEL_NAME" ]]; then
-  CHANNEL_NAME=$(gcloud monitoring channels list \
+  CHANNEL_NAME=$(gcloud alpha monitoring channels list \
     --project="$PROJECT_ID" \
     --filter='displayName="GCloudOps Email"' \
     --format="value(name)" \

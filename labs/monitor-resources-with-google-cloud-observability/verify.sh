@@ -10,7 +10,7 @@ gcloud monitoring dashboards list \
 
 echo
 echo "Notification channels:"
-gcloud monitoring channels list \
+gcloud alpha monitoring channels list \
   --project="$PROJECT_ID" \
   --filter='displayName="GCloudOps Email"'
 
