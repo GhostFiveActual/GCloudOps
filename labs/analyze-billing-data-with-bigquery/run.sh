@@ -27,21 +27,19 @@ echo "Dataset: $DATASET"
 echo "Table: $TABLE"
 echo
 
-echo "Enabling BigQuery API..."
 gcloud services enable bigquery.googleapis.com \
   --project="$PROJECT_ID" \
   --quiet
 
-echo
-echo "Creating dataset..."
 bq --location="$LOCATION" mk \
   --dataset \
   --default_table_expiration=86400 \
   "$PROJECT_ID:$DATASET" || true
 
-echo
-echo "Loading Avro billing data into BigQuery..."
+bq rm -f -t "$PROJECT_ID:$DATASET.$TABLE" >/dev/null 2>&1 || true
+
 bq load \
+  --location="$LOCATION" \
   --source_format=AVRO \
   "$PROJECT_ID:$DATASET.$TABLE" \
   "$SOURCE_URI"
@@ -52,26 +50,39 @@ bq show "$PROJECT_ID:$DATASET.$TABLE"
 
 echo
 echo "Row count:"
-bq query --use_legacy_sql=false \
+bq query --location="$LOCATION" --use_legacy_sql=false \
 "SELECT COUNT(*) AS total_rows FROM \`$PROJECT_ID.$DATASET.$TABLE\`;"
 
 echo
 echo "============================================================"
-echo "Checkpoint:"
+echo "CHECKPOINT 1"
 echo "Click Check my progress for: Use BigQuery to import data"
 echo "============================================================"
 read -r -p "Press ENTER after checkpoint passes..." _ < /dev/tty
 
 echo
-echo "Running simple query: cost > 0"
-bq query --use_legacy_sql=false \
+echo "Running exact Task 3 query..."
+bq query --location="$LOCATION" --use_legacy_sql=false \
+"SELECT * FROM \`$DATASET.$TABLE\`
+WHERE cost > 0;"
+
+echo
+echo "Task 3 answer:"
+bq query --location="$LOCATION" --use_legacy_sql=false \
 "SELECT COUNT(*) AS rows_cost_greater_than_zero
 FROM \`$PROJECT_ID.$DATASET.$TABLE\`
 WHERE cost > 0;"
 
 echo
-echo "Running full selected billing query..."
-bq query --use_legacy_sql=false \
+echo "============================================================"
+echo "CHECKPOINT 2"
+echo "Click Check my progress for: Compose a simple query"
+echo "============================================================"
+read -r -p "Press ENTER after checkpoint passes..." _ < /dev/tty
+
+echo
+echo "Running Task 4 query 1..."
+bq query --location="$LOCATION" --use_legacy_sql=false \
 "SELECT
   billing_account_id,
   project.id,
@@ -82,12 +93,12 @@ bq query --use_legacy_sql=false \
   cost,
   usage.amount,
   usage.pricing_unit
-FROM \`$PROJECT_ID.$DATASET.$TABLE\`
-LIMIT 100;"
+FROM
+  \`$DATASET.$TABLE\`;"
 
 echo
-echo "Latest 100 records where cost > 0..."
-bq query --use_legacy_sql=false \
+echo "Running Task 4 query 2..."
+bq query --location="$LOCATION" --use_legacy_sql=false \
 "SELECT
   service.description,
   sku.description,
@@ -99,14 +110,16 @@ bq query --use_legacy_sql=false \
   currency_conversion_rate,
   usage.amount,
   usage.unit
-FROM \`$PROJECT_ID.$DATASET.$TABLE\`
-WHERE cost > 0
+FROM
+  \`$DATASET.$TABLE\`
+WHERE
+  cost > 0
 ORDER BY usage_end_time DESC
 LIMIT 100;"
 
 echo
-echo "Charges greater than 10 dollars..."
-bq query --use_legacy_sql=false \
+echo "Running Task 4 query 3..."
+bq query --location="$LOCATION" --use_legacy_sql=false \
 "SELECT
   service.description,
   sku.description,
@@ -118,55 +131,68 @@ bq query --use_legacy_sql=false \
   currency_conversion_rate,
   usage.amount,
   usage.unit
-FROM \`$PROJECT_ID.$DATASET.$TABLE\`
-WHERE cost > 10;"
+FROM
+  \`$DATASET.$TABLE\`
+WHERE
+  cost > 10;"
 
 echo
-echo "Product with most billing records..."
-bq query --use_legacy_sql=false \
+echo "Running Task 4 query 4..."
+bq query --location="$LOCATION" --use_legacy_sql=false \
 "SELECT
   service.description,
   COUNT(*) AS billing_records
-FROM \`$PROJECT_ID.$DATASET.$TABLE\`
-GROUP BY service.description
+FROM
+  \`$DATASET.$TABLE\`
+GROUP BY
+  service.description
 ORDER BY billing_records DESC;"
 
 echo
-echo "Most frequently used product costing more than 1 dollar..."
-bq query --use_legacy_sql=false \
+echo "Running Task 4 query 5..."
+bq query --location="$LOCATION" --use_legacy_sql=false \
 "SELECT
   service.description,
   COUNT(*) AS billing_records
-FROM \`$PROJECT_ID.$DATASET.$TABLE\`
-WHERE cost > 1
-GROUP BY service.description
-ORDER BY billing_records DESC;"
+FROM
+  \`$DATASET.$TABLE\`
+WHERE
+  cost > 1
+GROUP BY
+  service.description
+ORDER BY
+  billing_records DESC;"
 
 echo
-echo "Most commonly charged unit of measure..."
-bq query --use_legacy_sql=false \
+echo "Running Task 4 query 6..."
+bq query --location="$LOCATION" --use_legacy_sql=false \
 "SELECT
   usage.unit,
   COUNT(*) AS billing_records
-FROM \`$PROJECT_ID.$DATASET.$TABLE\`
+FROM
+  \`$DATASET.$TABLE\`
 WHERE cost > 0
-GROUP BY usage.unit
-ORDER BY billing_records DESC;"
+GROUP BY
+  usage.unit
+ORDER BY
+  billing_records DESC;"
 
 echo
-echo "Product with highest aggregate cost..."
-bq query --use_legacy_sql=false \
+echo "Running Task 4 final aggregate cost query..."
+bq query --location="$LOCATION" --use_legacy_sql=false \
 "SELECT
   service.description,
-  ROUND(SUM(cost), 2) AS total_cost
-FROM \`$PROJECT_ID.$DATASET.$TABLE\`
-GROUP BY service.description
-ORDER BY total_cost DESC;"
+  ROUND(SUM(cost),2) AS total_cost
+FROM
+  \`$DATASET.$TABLE\`
+GROUP BY
+  service.description
+ORDER BY
+  total_cost DESC;"
 
 echo
 echo "============================================================"
-echo "Checkpoint:"
-echo "Click Check my progress for: Compose a simple query"
+echo "CHECKPOINT 3"
 echo "Click Check my progress for: Analyze a large billing dataset with SQL"
 echo "============================================================"
 echo
