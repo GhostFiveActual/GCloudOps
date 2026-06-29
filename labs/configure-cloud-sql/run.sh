@@ -90,7 +90,7 @@ gcloud sql instances create "$INSTANCE_NAME" \
   --network=default \
   --no-assign-ip \
   --authorized-networks=0.0.0.0/0 \
-  --quiet || true
+  --quiet
 
 echo
 echo "Waiting for Cloud SQL instance to become RUNNABLE..."
