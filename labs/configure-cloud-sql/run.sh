@@ -94,6 +94,12 @@ gcloud sql instances create "$INSTANCE_NAME" \
 
 echo
 echo "Waiting for Cloud SQL instance to become RUNNABLE..."
+
+if ! gcloud sql instances describe "$INSTANCE_NAME" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  echo "Cloud SQL instance was not created. Check the create command output above."
+  exit 1
+fi
+
 for i in {1..60}; do
   STATE_SQL=$(gcloud sql instances describe "$INSTANCE_NAME" \
     --project="$PROJECT_ID" \
