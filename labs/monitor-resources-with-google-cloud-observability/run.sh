@@ -13,12 +13,14 @@ while [[ -z "$EMAIL" || ! "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:
   read -r -p "Enter notification email: " EMAIL < /dev/tty
 done
 
+export EMAIL
 echo
 echo "============================================================"
 echo " GCloudOps :: Monitor Resources with Google Cloud Observability"
 echo "============================================================"
 echo "Project: $PROJECT_ID"
 echo "Email:   $EMAIL"
+export EMAIL
 echo
 
 gcloud services enable monitoring.googleapis.com \
@@ -60,6 +62,7 @@ api_patch() {
     "$1"
 }
 
+export EMAIL
 echo
 echo "[1/6] Verifying nginxstack VMs..."
 
@@ -84,6 +87,7 @@ fi
 # TASK 2
 # ============================================================
 
+export EMAIL
 echo
 echo "[2/6] Creating exact lab dashboard..."
 
@@ -161,6 +165,7 @@ fi
 
 echo "Dashboard: $DASHBOARD_NAME"
 
+export EMAIL
 echo
 echo "Verifying dashboard configuration..."
 
@@ -185,10 +190,12 @@ print("[PASS] My Chart")
 print("[PASS] VM Instance CPU utilization")
 '
 
+export EMAIL
 echo
 echo "Waiting 20 seconds for Monitoring grader propagation..."
 sleep 20
 
+export EMAIL
 echo
 echo "============================================================"
 echo "TASK 2 READY"
@@ -200,6 +207,7 @@ read -r -p "Press ENTER after Task 2 passes..." _ < /dev/tty
 # TASK 3 - NOTIFICATION CHANNEL
 # ============================================================
 
+export EMAIL
 echo
 echo "[3/6] Creating email notification channel..."
 
@@ -254,6 +262,7 @@ echo "Notification channel: $CHANNEL_NAME"
 # TASK 3 - ALERT POLICY
 # ============================================================
 
+export EMAIL
 echo
 echo "Creating My Alert Policy..."
 
@@ -334,6 +343,7 @@ echo "Alert policy: $ALERT_POLICY_NAME"
 
 sleep 10
 
+export EMAIL
 echo
 echo "============================================================"
 echo "TASK 3 READY"
@@ -345,6 +355,7 @@ read -r -p "Press ENTER after Task 3 passes..." _ < /dev/tty
 # TASK 4 - RESOURCE GROUP
 # ============================================================
 
+export EMAIL
 echo
 echo "[4/6] Creating VM instances group..."
 
@@ -392,6 +403,7 @@ echo "Group ID: $GROUP_ID"
 
 sleep 10
 
+export EMAIL
 echo
 echo "============================================================"
 echo "TASK 4 READY"
@@ -403,6 +415,7 @@ read -r -p "Press ENTER after Task 4 passes..." _ < /dev/tty
 # TASK 5 - UPTIME CHECK
 # ============================================================
 
+export EMAIL
 echo
 echo "[5/6] Creating My Uptime check..."
 
@@ -456,10 +469,12 @@ fi
 
 echo "Uptime check: $UPTIME_NAME"
 
+export EMAIL
 echo
 echo "Waiting 60 seconds for uptime check propagation..."
 sleep 60
 
+export EMAIL
 echo
 echo "============================================================"
 echo "TASK 5 READY"
@@ -471,6 +486,7 @@ read -r -p "Press ENTER after Task 5 passes..." _ < /dev/tty
 # TASK 6
 # ============================================================
 
+export EMAIL
 echo
 echo "[6/6] Disabling My Alert Policy..."
 
@@ -484,6 +500,7 @@ api_patch \
   "https://monitoring.googleapis.com/v3/${ALERT_POLICY_NAME}?updateMask=enabled" \
   /tmp/disable.json >/dev/null
 
+export EMAIL
 echo
 echo "============================================================"
 echo " CBL012 AUTOMATION COMPLETE"
