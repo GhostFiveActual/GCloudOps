@@ -3,48 +3,34 @@ set -euo pipefail
 
 PROJECT_ID="$(gcloud config get-value project 2>/dev/null)"
 
-if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
-  echo "ERROR: No active Google Cloud project."
-  exit 1
-fi
+REGION="us-east1"
+ZONE="us-east1-c"
 
-REGION="${REGION:-}"
-ZONE="${ZONE:-}"
-CLUSTER_NAME="${CLUSTER_NAME:-}"
-SERVICE_ACCOUNT_ID="${SERVICE_ACCOUNT_ID:-}"
+ROLE_ID="orca_storage_editor_889"
+ROLE_TITLE="orca_storage_editor_889"
 
-[[ -n "$REGION" ]] || read -r -p "Paste lab REGION: " REGION </dev/tty
-[[ -n "$ZONE" ]] || read -r -p "Paste lab ZONE: " ZONE </dev/tty
-[[ -n "$CLUSTER_NAME" ]] || read -r -p "Paste exact lab Cluster Name: " CLUSTER_NAME </dev/tty
-[[ -n "$SERVICE_ACCOUNT_ID" ]] || read -r -p "Paste exact lab Service Account ID: " SERVICE_ACCOUNT_ID </dev/tty
+SA_ID="orca-private-cluster-713-sa"
+SA_EMAIL="${SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-CUSTOM_ROLE_ID="orcaStorageRole"
-CUSTOM_ROLE_TITLE="Custom Security Role"
+CLUSTER="orca-cluster-631"
 SUBNET="orca-build-subnet"
 JUMPHOST="orca-jumphost"
 
-SA_EMAIL="${SERVICE_ACCOUNT_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
-CUSTOM_ROLE="projects/${PROJECT_ID}/roles/${CUSTOM_ROLE_ID}"
+CUSTOM_ROLE="projects/${PROJECT_ID}/roles/${ROLE_ID}"
 
-echo
 echo "============================================================"
-echo " GCloudOps :: GSP342"
-echo " Implement Cloud Security Fundamentals"
+echo " GSP342 :: Cloud Security Fundamentals"
 echo "============================================================"
-echo "Project:         $PROJECT_ID"
-echo "Region:          $REGION"
-echo "Zone:            $ZONE"
-echo "Cluster:         $CLUSTER_NAME"
-echo "Service Account: $SA_EMAIL"
-echo "Subnet:          $SUBNET"
-echo "Jumphost:        $JUMPHOST"
+echo "Project: $PROJECT_ID"
+echo "Region:  $REGION"
+echo "Zone:    $ZONE"
+echo "Role:    $ROLE_ID"
+echo "SA:      $SA_EMAIL"
+echo "Cluster: $CLUSTER"
 echo "============================================================"
 
 gcloud config set compute/region "$REGION" --quiet
 gcloud config set compute/zone "$ZONE" --quiet
-
-echo
-echo "Enabling required APIs..."
 
 gcloud services enable \
   container.googleapis.com \
@@ -52,74 +38,54 @@ gcloud services enable \
   iam.googleapis.com \
   monitoring.googleapis.com \
   logging.googleapis.com \
-  --project="$PROJECT_ID" \
   --quiet
 
 # ============================================================
 # TASK 1
-# CUSTOM SECURITY ROLE
 # ============================================================
 
 echo
-echo "============================================================"
-echo "[1/5] Creating custom security role"
-echo "============================================================"
+echo "[1/5] CUSTOM SECURITY ROLE"
 
-if gcloud iam roles describe "$CUSTOM_ROLE_ID" \
+if gcloud iam roles describe "$ROLE_ID" \
     --project="$PROJECT_ID" >/dev/null 2>&1; then
 
-  echo "$CUSTOM_ROLE_ID already exists."
-
-  gcloud iam roles update "$CUSTOM_ROLE_ID" \
+  gcloud iam roles update "$ROLE_ID" \
     --project="$PROJECT_ID" \
-    --title="$CUSTOM_ROLE_TITLE" \
-    --description="Orca GKE storage object access" \
+    --title="$ROLE_TITLE" \
     --permissions="storage.buckets.get,storage.objects.get,storage.objects.list,storage.objects.update,storage.objects.create" \
     --stage=GA \
     --quiet
-
 else
-
-  gcloud iam roles create "$CUSTOM_ROLE_ID" \
+  gcloud iam roles create "$ROLE_ID" \
     --project="$PROJECT_ID" \
-    --title="$CUSTOM_ROLE_TITLE" \
-    --description="Orca GKE storage object access" \
+    --title="$ROLE_TITLE" \
     --permissions="storage.buckets.get,storage.objects.get,storage.objects.list,storage.objects.update,storage.objects.create" \
     --stage=GA \
     --quiet
 fi
 
-echo
-echo "Custom role:"
-gcloud iam roles describe "$CUSTOM_ROLE_ID" \
+gcloud iam roles describe "$ROLE_ID" \
   --project="$PROJECT_ID" \
-  --format="yaml(name,title,includedPermissions,stage)"
+  --format="yaml(name,title,includedPermissions)"
 
 echo
-echo "TASK 1 COMPLETE"
-echo "Click Check my progress: Custom security role"
+echo "TASK 1 READY — click Check my progress."
 read -r -p "Press ENTER after Task 1 passes..." _ </dev/tty
 
 # ============================================================
 # TASK 2
-# SERVICE ACCOUNT
 # ============================================================
 
 echo
-echo "============================================================"
-echo "[2/5] Creating dedicated service account"
-echo "============================================================"
+echo "[2/5] SERVICE ACCOUNT"
 
-if gcloud iam service-accounts describe "$SA_EMAIL" \
+if ! gcloud iam service-accounts describe "$SA_EMAIL" \
     --project="$PROJECT_ID" >/dev/null 2>&1; then
 
-  echo "$SA_EMAIL already exists."
-
-else
-
-  gcloud iam service-accounts create "$SERVICE_ACCOUNT_ID" \
+  gcloud iam service-accounts create "$SA_ID" \
     --project="$PROJECT_ID" \
-    --display-name="Service Account"
+    --display-name="$SA_ID"
 fi
 
 gcloud iam service-accounts describe "$SA_EMAIL" \
@@ -127,30 +93,23 @@ gcloud iam service-accounts describe "$SA_EMAIL" \
   --format="yaml(email,displayName)"
 
 echo
-echo "TASK 2 COMPLETE"
-echo "Click Check my progress: Create service account"
+echo "TASK 2 READY — click Check my progress."
 read -r -p "Press ENTER after Task 2 passes..." _ </dev/tty
 
 # ============================================================
 # TASK 3
-# IAM ROLE BINDINGS
 # ============================================================
 
 echo
-echo "============================================================"
-echo "[3/5] Binding least-privilege roles"
-echo "============================================================"
+echo "[3/5] IAM BINDINGS"
 
-ROLES=(
-  "roles/monitoring.viewer"
-  "roles/monitoring.metricWriter"
-  "roles/logging.logWriter"
+for ROLE in \
+  roles/monitoring.viewer \
+  roles/monitoring.metricWriter \
+  roles/logging.logWriter \
   "$CUSTOM_ROLE"
-)
-
-for ROLE in "${ROLES[@]}"; do
-
-  echo "Binding $ROLE..."
+do
+  echo "Binding $ROLE"
 
   gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${SA_EMAIL}" \
@@ -160,91 +119,64 @@ for ROLE in "${ROLES[@]}"; do
 done
 
 echo
-echo "IAM bindings for cluster service account:"
-
+echo "Bindings:"
 gcloud projects get-iam-policy "$PROJECT_ID" \
   --flatten="bindings[].members" \
-  --filter="bindings.members:serviceAccount:${SA_EMAIL}" \
+  --filter="bindings.members:${SA_EMAIL}" \
   --format="table(bindings.role)"
 
 echo
-echo "TASK 3 COMPLETE"
-echo "Click Check my progress: Bind security roles"
+echo "TASK 3 READY — click Check my progress."
 read -r -p "Press ENTER after Task 3 passes..." _ </dev/tty
 
 # ============================================================
-# DISCOVER EXISTING ORCA NETWORK RESOURCES
+# DISCOVER NETWORK + JUMPHOST
 # ============================================================
 
 echo
-echo "Discovering Orca Build VPC..."
+echo "Discovering network..."
 
 NETWORK_URL="$(
   gcloud compute networks subnets describe "$SUBNET" \
-    --project="$PROJECT_ID" \
     --region="$REGION" \
+    --project="$PROJECT_ID" \
     --format="value(network)"
 )"
 
 NETWORK="${NETWORK_URL##*/}"
 
-if [[ -z "$NETWORK" ]]; then
-  echo "ERROR: Could not determine network containing $SUBNET."
-  exit 1
-fi
-
-echo "Network: $NETWORK"
-
-echo
-echo "Finding orca-jumphost..."
-
 JUMP_ZONE="$(
   gcloud compute instances list \
     --project="$PROJECT_ID" \
-    --filter="name=${JUMPHOST}" \
+    --filter="name=('${JUMPHOST}')" \
     --format="value(zone.basename())" \
     --limit=1
 )"
 
-if [[ -z "$JUMP_ZONE" ]]; then
-  echo "ERROR: orca-jumphost was not found."
-  exit 1
-fi
-
 JUMP_IP="$(
   gcloud compute instances describe "$JUMPHOST" \
-    --project="$PROJECT_ID" \
     --zone="$JUMP_ZONE" \
+    --project="$PROJECT_ID" \
     --format="value(networkInterfaces[0].networkIP)"
 )"
 
-if [[ -z "$JUMP_IP" ]]; then
-  echo "ERROR: Could not determine orca-jumphost internal IP."
-  exit 1
-fi
-
+echo "Network:       $NETWORK"
 echo "Jumphost zone: $JUMP_ZONE"
 echo "Jumphost IP:   $JUMP_IP"
+echo "Authorized:    ${JUMP_IP}/32"
 
 # ============================================================
 # TASK 4
-# PRIVATE GKE CLUSTER
 # ============================================================
 
 echo
-echo "============================================================"
-echo "[4/5] Creating private GKE cluster"
-echo "============================================================"
+echo "[4/5] PRIVATE GKE CLUSTER"
 
-if gcloud container clusters describe "$CLUSTER_NAME" \
-    --project="$PROJECT_ID" \
-    --zone="$ZONE" >/dev/null 2>&1; then
+if ! gcloud container clusters describe "$CLUSTER" \
+    --zone="$ZONE" \
+    --project="$PROJECT_ID" >/dev/null 2>&1; then
 
-  echo "$CLUSTER_NAME already exists."
-
-else
-
-  gcloud container clusters create "$CLUSTER_NAME" \
+  gcloud container clusters create "$CLUSTER" \
     --project="$PROJECT_ID" \
     --zone="$ZONE" \
     --network="$NETWORK" \
@@ -256,41 +188,10 @@ else
     --enable-master-authorized-networks \
     --master-authorized-networks="${JUMP_IP}/32" \
     --quiet
-fi
+else
+  echo "Cluster already exists."
 
-echo
-echo "Verifying cluster configuration..."
-
-gcloud container clusters describe "$CLUSTER_NAME" \
-  --project="$PROJECT_ID" \
-  --zone="$ZONE" \
-  --format="yaml(
-name,
-location,
-network,
-subnetwork,
-privateClusterConfig,
-masterAuthorizedNetworksConfig,
-nodeConfig.serviceAccount
-)"
-
-echo
-echo "Checking authorized network..."
-
-AUTHORIZED="$(
-  gcloud container clusters describe "$CLUSTER_NAME" \
-    --project="$PROJECT_ID" \
-    --zone="$ZONE" \
-    --format="value(masterAuthorizedNetworksConfig.cidrBlocks[].cidrBlock)"
-)"
-
-echo "$AUTHORIZED"
-
-if [[ "$AUTHORIZED" != *"${JUMP_IP}/32"* ]]; then
-
-  echo "Updating master authorized network..."
-
-  gcloud container clusters update "$CLUSTER_NAME" \
+  gcloud container clusters update "$CLUSTER" \
     --project="$PROJECT_ID" \
     --zone="$ZONE" \
     --enable-master-authorized-networks \
@@ -299,108 +200,97 @@ if [[ "$AUTHORIZED" != *"${JUMP_IP}/32"* ]]; then
 fi
 
 echo
-echo "TASK 4 COMPLETE"
-echo "Click Check my progress: Create private Kubernetes cluster"
+echo "Cluster verification:"
+
+gcloud container clusters describe "$CLUSTER" \
+  --project="$PROJECT_ID" \
+  --zone="$ZONE" \
+  --format="yaml(
+name,
+location,
+network,
+subnetwork,
+privateClusterConfig.enablePrivateNodes,
+privateClusterConfig.enablePrivateEndpoint,
+privateClusterConfig.privateEndpoint,
+masterAuthorizedNetworksConfig,
+nodeConfig.serviceAccount
+)"
+
+echo
+echo "TASK 4 READY — click Check my progress."
 read -r -p "Press ENTER after Task 4 passes..." _ </dev/tty
 
 # ============================================================
 # TASK 5
-# DEPLOY FROM JUMPHOST
 # ============================================================
 
 echo
-echo "============================================================"
-echo "[5/5] Deploying hello-server from orca-jumphost"
-echo "============================================================"
+echo "[5/5] DEPLOY FROM ORCA JUMPHOST"
 
-REMOTE_SCRIPT="/tmp/orca-gke-deploy.sh"
-
-cat > /tmp/orca-gke-deploy.sh <<REMOTE
+cat >/tmp/orca-deploy.sh <<REMOTE
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-PROJECT_ID="$PROJECT_ID"
-CLUSTER_NAME="$CLUSTER_NAME"
-ZONE="$ZONE"
-
-echo "Installing GKE auth plugin..."
+export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 
 if ! command -v gke-gcloud-auth-plugin >/dev/null 2>&1; then
   sudo apt-get update
   sudo apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin
 fi
 
-export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-
-echo "Getting private cluster credentials..."
-
-gcloud config set project "\$PROJECT_ID" --quiet
-
-gcloud container clusters get-credentials "\$CLUSTER_NAME" \
+gcloud container clusters get-credentials "$CLUSTER" \
   --internal-ip \
-  --project="\$PROJECT_ID" \
-  --zone="\$ZONE"
+  --project="$PROJECT_ID" \
+  --zone="$ZONE"
 
 echo
-echo "Cluster nodes:"
+echo "=== NODES ==="
 kubectl get nodes
 
 echo
-echo "Creating hello-server deployment..."
+echo "=== DEPLOY HELLO SERVER ==="
 
 kubectl create deployment hello-server \
   --image=gcr.io/google-samples/hello-app:1.0 \
   --dry-run=client \
-  -o yaml \
-  | kubectl apply -f -
-
-echo
-echo "Waiting for hello-server rollout..."
+  -o yaml |
+kubectl apply -f -
 
 kubectl rollout status deployment/hello-server \
   --timeout=180s
 
 echo
-echo "Deployment:"
+echo "=== DEPLOYMENT ==="
 kubectl get deployment hello-server
 
 echo
-echo "Pods:"
-kubectl get pods \
-  -l app=hello-server \
-  -o wide
+echo "=== PODS ==="
+kubectl get pods -l app=hello-server -o wide
 REMOTE
 
-echo
-echo "Copying deployment script to jumphost..."
-
 gcloud compute scp \
-  /tmp/orca-gke-deploy.sh \
-  "${JUMPHOST}:${REMOTE_SCRIPT}" \
-  --project="$PROJECT_ID" \
+  /tmp/orca-deploy.sh \
+  "${JUMPHOST}:/tmp/orca-deploy.sh" \
   --zone="$JUMP_ZONE" \
+  --project="$PROJECT_ID" \
   --quiet
 
-echo
-echo "Executing from jumphost..."
-
 gcloud compute ssh "$JUMPHOST" \
-  --project="$PROJECT_ID" \
   --zone="$JUMP_ZONE" \
-  --command="chmod +x ${REMOTE_SCRIPT} && ${REMOTE_SCRIPT}"
+  --project="$PROJECT_ID" \
+  --command="chmod +x /tmp/orca-deploy.sh && /tmp/orca-deploy.sh"
 
 echo
 echo "============================================================"
-echo " GSP342 AUTOMATION COMPLETE"
+echo " GSP342 COMPLETE"
 echo "============================================================"
-echo "Custom role:     $CUSTOM_ROLE_TITLE"
-echo "Role ID:         $CUSTOM_ROLE_ID"
-echo "Service account: $SA_EMAIL"
-echo "Cluster:         $CLUSTER_NAME"
-echo "Subnet:          $SUBNET"
-echo "Network:         $NETWORK"
-echo "Jumphost:        $JUMPHOST"
-echo "Authorized CIDR: ${JUMP_IP}/32"
-echo "Deployment:      hello-server"
+echo "Role:       $ROLE_ID"
+echo "SA:         $SA_EMAIL"
+echo "Cluster:    $CLUSTER"
+echo "Network:    $NETWORK"
+echo "Subnet:     $SUBNET"
+echo "Authorized: ${JUMP_IP}/32"
+echo "Deployment: hello-server"
 echo
 echo "Click Check my progress for Task 5."
