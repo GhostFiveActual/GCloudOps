@@ -11,10 +11,6 @@ fi
 
 while [[ -z "$EMAIL" || ! "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; do
   read -r -p "Enter notification email: " EMAIL < /dev/tty
-
-  if [[ ! "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
-    echo "Invalid email. Try again."
-  fi
 done
 
 echo
@@ -29,87 +25,102 @@ gcloud services enable monitoring.googleapis.com \
   --project="$PROJECT_ID" \
   --quiet
 
-TOKEN="$(gcloud auth print-access-token)"
-MONITORING_V3="https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}"
+refresh_token() {
+  TOKEN="$(gcloud auth print-access-token)"
+}
+
+refresh_token
+
+BASE="https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}"
+
+api_get() {
+  refresh_token
+  curl -fsS \
+    -H "Authorization: Bearer ${TOKEN}" \
+    "$1"
+}
 
 api_post() {
-  local url="$1"
-  local body="$2"
-
+  refresh_token
   curl -fsS \
     -X POST \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d @"$body" \
-    "$url"
+    -d @"$2" \
+    "$1"
 }
 
 api_patch() {
-  local url="$1"
-  local body="$2"
-
+  refresh_token
   curl -fsS \
     -X PATCH \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d @"$body" \
-    "$url"
+    -d @"$2" \
+    "$1"
 }
 
 echo
 echo "[1/6] Verifying nginxstack VMs..."
-
-VM_COUNT="$(
-  gcloud compute instances list \
-    --project="$PROJECT_ID" \
-    --filter='name~"^nginxstack-[123]$"' \
-    --format='value(name)' \
-    | wc -l
-)"
 
 gcloud compute instances list \
   --project="$PROJECT_ID" \
   --filter='name~"^nginxstack-[123]$"' \
   --format='table(name,zone.basename(),status,networkInterfaces[0].accessConfigs[0].natIP)'
 
-if [[ "$VM_COUNT" -lt 3 ]]; then
-  echo "ERROR: Expected nginxstack-1, nginxstack-2, nginxstack-3."
+VM_COUNT="$(
+  gcloud compute instances list \
+    --project="$PROJECT_ID" \
+    --filter='name~"^nginxstack-[123]$"' \
+    --format='value(name)' | wc -l
+)"
+
+if [[ "$VM_COUNT" -ne 3 ]]; then
+  echo "ERROR: Expected exactly 3 nginxstack VMs."
   exit 1
 fi
 
 # ============================================================
-# TASK 2 - DASHBOARD
+# TASK 2
 # ============================================================
 
 echo
-echo "[2/6] Creating My Dashboard / My Chart..."
+echo "[2/6] Creating exact lab dashboard..."
 
-cat > /tmp/dashboard.json <<'JSON'
+cat >/tmp/dashboard.json <<'JSON'
 {
   "displayName": "My Dashboard",
-  "gridLayout": {
-    "columns": "1",
-    "widgets": [
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
       {
-        "title": "My Chart",
-        "xyChart": {
-          "dataSets": [
-            {
-              "timeSeriesQuery": {
-                "timeSeriesFilter": {
-                  "filter": "resource.type=\"gce_instance\" AND metric.type=\"compute.googleapis.com/instance/cpu/utilization\"",
-                  "aggregation": {
-                    "alignmentPeriod": "60s",
-                    "perSeriesAligner": "ALIGN_MEAN"
+        "xPos": 0,
+        "yPos": 0,
+        "width": 12,
+        "height": 8,
+        "widget": {
+          "title": "My Chart",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"compute.googleapis.com/instance/cpu/utilization\" AND resource.type=\"gce_instance\"",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_MEAN",
+                      "crossSeriesReducer": "REDUCE_NONE"
+                    }
                   }
-                }
-              },
-              "plotType": "LINE"
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "CPU utilization",
+              "scale": "LINEAR"
             }
-          ],
-          "yAxis": {
-            "label": "CPU utilization",
-            "scale": "LINEAR"
           }
         }
       }
@@ -118,59 +129,102 @@ cat > /tmp/dashboard.json <<'JSON'
 }
 JSON
 
-EXISTING_DASHBOARD="$(
-  gcloud monitoring dashboards list \
-    --project="$PROJECT_ID" \
-    --format='value(name,displayName)' \
-    2>/dev/null \
-    | awk '$2=="My Dashboard"{print $1; exit}'
+DASHBOARDS="$(api_get "${BASE}/dashboards")"
+
+DASHBOARD_NAME="$(
+  printf '%s' "$DASHBOARDS" |
+  python3 -c '
+import json,sys
+data=json.load(sys.stdin)
+for d in data.get("dashboards", []):
+    if d.get("displayName") == "My Dashboard":
+        print(d.get("name",""))
+        break
+'
 )"
 
-if [[ -z "$EXISTING_DASHBOARD" ]]; then
-  gcloud monitoring dashboards create \
-    --project="$PROJECT_ID" \
-    --config-from-file=/tmp/dashboard.json
+if [[ -z "$DASHBOARD_NAME" ]]; then
+  DASHBOARD_JSON="$(api_post "${BASE}/dashboards" /tmp/dashboard.json)"
+
+  DASHBOARD_NAME="$(
+    printf '%s' "$DASHBOARD_JSON" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
+  )"
 else
-  echo "My Dashboard already exists: $EXISTING_DASHBOARD"
+  echo "My Dashboard already exists."
 fi
 
+if [[ -z "$DASHBOARD_NAME" ]]; then
+  echo "ERROR: Dashboard creation failed."
+  exit 1
+fi
+
+echo "Dashboard: $DASHBOARD_NAME"
+
+echo
+echo "Verifying dashboard configuration..."
+
+DASHBOARD_VERIFY="$(api_get "https://monitoring.googleapis.com/v1/${DASHBOARD_NAME}")"
+
+printf '%s' "$DASHBOARD_VERIFY" |
+python3 -c '
+import json,sys
+
+d=json.load(sys.stdin)
+
+assert d.get("displayName") == "My Dashboard", "wrong dashboard name"
+
+text=json.dumps(d)
+
+assert "My Chart" in text, "My Chart missing"
+assert "compute.googleapis.com/instance/cpu/utilization" in text, "CPU utilization metric missing"
+assert "gce_instance" in text, "VM Instance resource missing"
+
+print("[PASS] My Dashboard")
+print("[PASS] My Chart")
+print("[PASS] VM Instance CPU utilization")
+'
+
+echo
+echo "Waiting 20 seconds for Monitoring grader propagation..."
+sleep 20
+
 echo
 echo "============================================================"
-echo "TASK 2 COMPLETE"
+echo "TASK 2 READY"
 echo "Click Check my progress: Create custom dashboard"
 echo "============================================================"
-read -r -p "Press ENTER after the checkpoint passes..." _ < /dev/tty
+read -r -p "Press ENTER after Task 2 passes..." _ < /dev/tty
 
 # ============================================================
-# NOTIFICATION CHANNEL
+# TASK 3 - NOTIFICATION CHANNEL
 # ============================================================
 
 echo
-echo "[3/6] Creating notification channel..."
+echo "[3/6] Creating email notification channel..."
 
-CHANNEL_RESPONSE="$(
-  curl -fsS \
-    -H "Authorization: Bearer ${TOKEN}" \
-    "${MONITORING_V3}/notificationChannels"
-)"
+CHANNELS="$(api_get "${BASE}/notificationChannels")"
 
 CHANNEL_NAME="$(
-  printf '%s' "$CHANNEL_RESPONSE" | python3 - "$EMAIL" <<'PY'
-import json, sys
-
-email = sys.argv[1]
-data = json.load(sys.stdin)
+  printf '%s' "$CHANNELS" |
+  python3 -c '
+import json,sys,os
+email=os.environ["EMAIL"]
+data=json.load(sys.stdin)
 
 for ch in data.get("notificationChannels", []):
-    if ch.get("type") == "email" and ch.get("labels", {}).get("email_address") == email:
-        print(ch.get("name", ""))
+    if (
+        ch.get("type") == "email"
+        and ch.get("labels", {}).get("email_address") == email
+    ):
+        print(ch.get("name",""))
         break
-PY
+'
 )"
 
 if [[ -z "$CHANNEL_NAME" ]]; then
 
-  cat > /tmp/channel.json <<EOF_JSON
+  cat >/tmp/channel.json <<EOF_JSON
 {
   "type": "email",
   "displayName": "GCloudOps Email",
@@ -181,11 +235,12 @@ if [[ -z "$CHANNEL_NAME" ]]; then
 }
 EOF_JSON
 
-  CHANNEL_NAME="$(
-    api_post "${MONITORING_V3}/notificationChannels" /tmp/channel.json \
-      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
-  )"
+  CHANNEL_JSON="$(api_post "${BASE}/notificationChannels" /tmp/channel.json)"
 
+  CHANNEL_NAME="$(
+    printf '%s' "$CHANNEL_JSON" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
+  )"
 fi
 
 if [[ -z "$CHANNEL_NAME" ]]; then
@@ -202,7 +257,7 @@ echo "Notification channel: $CHANNEL_NAME"
 echo
 echo "Creating My Alert Policy..."
 
-cat > /tmp/alert-policy.json <<EOF_JSON
+cat >/tmp/alert-policy.json <<EOF_JSON
 {
   "displayName": "My Alert Policy",
   "combiner": "AND",
@@ -212,9 +267,9 @@ cat > /tmp/alert-policy.json <<EOF_JSON
   ],
   "conditions": [
     {
-      "displayName": "CPU usage above 20",
+      "displayName": "VM Instance CPU usage",
       "conditionThreshold": {
-        "filter": "resource.type = \"gce_instance\" AND metric.type = \"compute.googleapis.com/instance/cpu/usage_time\"",
+        "filter": "resource.type=\"gce_instance\" AND metric.type=\"compute.googleapis.com/instance/cpu/usage_time\"",
         "comparison": "COMPARISON_GT",
         "thresholdValue": 20,
         "duration": "60s",
@@ -223,62 +278,51 @@ cat > /tmp/alert-policy.json <<EOF_JSON
             "alignmentPeriod": "60s",
             "perSeriesAligner": "ALIGN_RATE"
           }
-        ],
-        "trigger": {
-          "count": 1
-        }
+        ]
       }
     },
     {
-      "displayName": "CPU utilization above 20 percent",
+      "displayName": "VM Instance CPU utilization",
       "conditionThreshold": {
-        "filter": "resource.type = \"gce_instance\" AND metric.type = \"compute.googleapis.com/instance/cpu/utilization\"",
+        "filter": "resource.type=\"gce_instance\" AND metric.type=\"compute.googleapis.com/instance/cpu/utilization\"",
         "comparison": "COMPARISON_GT",
-        "thresholdValue": 0.2,
+        "thresholdValue": 20,
         "duration": "60s",
         "aggregations": [
           {
             "alignmentPeriod": "60s",
             "perSeriesAligner": "ALIGN_MEAN"
           }
-        ],
-        "trigger": {
-          "count": 1
-        }
+        ]
       }
     }
   ]
 }
 EOF_JSON
 
-POLICIES="$(
-  curl -fsS \
-    -H "Authorization: Bearer ${TOKEN}" \
-    "${MONITORING_V3}/alertPolicies"
-)"
+POLICIES="$(api_get "${BASE}/alertPolicies")"
 
 ALERT_POLICY_NAME="$(
-  printf '%s' "$POLICIES" | python3 <<'PY'
-import json, sys
-
-data = json.load(sys.stdin)
+  printf '%s' "$POLICIES" |
+  python3 -c '
+import json,sys
+data=json.load(sys.stdin)
 
 for p in data.get("alertPolicies", []):
     if p.get("displayName") == "My Alert Policy":
-        print(p.get("name", ""))
+        print(p.get("name",""))
         break
-PY
+'
 )"
 
 if [[ -z "$ALERT_POLICY_NAME" ]]; then
 
-  ALERT_POLICY_NAME="$(
-    api_post "${MONITORING_V3}/alertPolicies" /tmp/alert-policy.json \
-      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
-  )"
+  POLICY_JSON="$(api_post "${BASE}/alertPolicies" /tmp/alert-policy.json)"
 
-else
-  echo "My Alert Policy already exists."
+  ALERT_POLICY_NAME="$(
+    printf '%s' "$POLICY_JSON" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
+  )"
 fi
 
 if [[ -z "$ALERT_POLICY_NAME" ]]; then
@@ -288,71 +332,72 @@ fi
 
 echo "Alert policy: $ALERT_POLICY_NAME"
 
+sleep 10
+
 echo
 echo "============================================================"
-echo "TASK 3 COMPLETE"
+echo "TASK 3 READY"
 echo "Click Check my progress: Create alerting policies"
 echo "============================================================"
-read -r -p "Press ENTER after the checkpoint passes..." _ < /dev/tty
+read -r -p "Press ENTER after Task 3 passes..." _ < /dev/tty
 
 # ============================================================
-# TASK 4 - GROUP
+# TASK 4 - RESOURCE GROUP
 # ============================================================
 
 echo
-echo "[4/6] Creating VM instances resource group..."
+echo "[4/6] Creating VM instances group..."
 
-GROUPS="$(
-  curl -fsS \
-    -H "Authorization: Bearer ${TOKEN}" \
-    "${MONITORING_V3}/groups"
-)"
+GROUPS="$(api_get "${BASE}/groups")"
 
 GROUP_NAME="$(
-  printf '%s' "$GROUPS" | python3 <<'PY'
-import json, sys
-
-data = json.load(sys.stdin)
+  printf '%s' "$GROUPS" |
+  python3 -c '
+import json,sys
+data=json.load(sys.stdin)
 
 for g in data.get("group", data.get("groups", [])):
     if g.get("displayName") == "VM instances":
-        print(g.get("name", ""))
+        print(g.get("name",""))
         break
-PY
+'
 )"
 
 if [[ -z "$GROUP_NAME" ]]; then
 
-  cat > /tmp/group.json <<'JSON'
+  cat >/tmp/group.json <<'JSON'
 {
   "displayName": "VM instances",
   "filter": "resource.metadata.name=has_substring(\"nginx\")"
 }
 JSON
 
-  GROUP_NAME="$(
-    api_post "${MONITORING_V3}/groups" /tmp/group.json \
-      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
-  )"
+  GROUP_JSON="$(api_post "${BASE}/groups" /tmp/group.json)"
 
+  GROUP_NAME="$(
+    printf '%s' "$GROUP_JSON" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
+  )"
 fi
 
 if [[ -z "$GROUP_NAME" ]]; then
-  echo "ERROR: Resource group creation failed."
+  echo "ERROR: Monitoring group creation failed."
   exit 1
 fi
 
 GROUP_ID="${GROUP_NAME##*/}"
 
-echo "Group:    $GROUP_NAME"
+echo "Group: $GROUP_NAME"
 echo "Group ID: $GROUP_ID"
+
+sleep 10
 
 echo
 echo "============================================================"
-echo "TASK 4 COMPLETE"
+echo "TASK 4 READY"
 echo "Click Check my progress: Create resource groups"
 echo "============================================================"
-read -r -p "Press ENTER after the checkpoint passes..." _ < /dev/tty
+read -r -p "Press ENTER after Task 4 passes..." _ < /dev/tty
 
 # ============================================================
 # TASK 5 - UPTIME CHECK
@@ -361,28 +406,24 @@ read -r -p "Press ENTER after the checkpoint passes..." _ < /dev/tty
 echo
 echo "[5/6] Creating My Uptime check..."
 
-UPTIME_LIST="$(
-  curl -fsS \
-    -H "Authorization: Bearer ${TOKEN}" \
-    "${MONITORING_V3}/uptimeCheckConfigs"
-)"
+UPTIMES="$(api_get "${BASE}/uptimeCheckConfigs")"
 
 UPTIME_NAME="$(
-  printf '%s' "$UPTIME_LIST" | python3 <<'PY'
-import json, sys
-
-data = json.load(sys.stdin)
+  printf '%s' "$UPTIMES" |
+  python3 -c '
+import json,sys
+data=json.load(sys.stdin)
 
 for u in data.get("uptimeCheckConfigs", []):
     if u.get("displayName") == "My Uptime check":
-        print(u.get("name", ""))
+        print(u.get("name",""))
         break
-PY
+'
 )"
 
 if [[ -z "$UPTIME_NAME" ]]; then
 
-  cat > /tmp/uptime.json <<EOF_JSON
+  cat >/tmp/uptime.json <<EOF_JSON
 {
   "displayName": "My Uptime check",
   "period": "60s",
@@ -400,11 +441,12 @@ if [[ -z "$UPTIME_NAME" ]]; then
 }
 EOF_JSON
 
-  UPTIME_NAME="$(
-    api_post "${MONITORING_V3}/uptimeCheckConfigs" /tmp/uptime.json \
-      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
-  )"
+  UPTIME_JSON="$(api_post "${BASE}/uptimeCheckConfigs" /tmp/uptime.json)"
 
+  UPTIME_NAME="$(
+    printf '%s' "$UPTIME_JSON" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
+  )"
 fi
 
 if [[ -z "$UPTIME_NAME" ]]; then
@@ -412,70 +454,27 @@ if [[ -z "$UPTIME_NAME" ]]; then
   exit 1
 fi
 
-UPTIME_ID="${UPTIME_NAME##*/}"
-
 echo "Uptime check: $UPTIME_NAME"
 
 echo
-echo "Creating notification policy for uptime check..."
-
-cat > /tmp/uptime-policy.json <<EOF_JSON
-{
-  "displayName": "My Uptime check alert",
-  "combiner": "OR",
-  "enabled": true,
-  "notificationChannels": [
-    "$CHANNEL_NAME"
-  ],
-  "conditions": [
-    {
-      "displayName": "My Uptime check failed",
-      "conditionThreshold": {
-        "filter": "resource.type = \"gce_instance\" AND metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id = \"$UPTIME_ID\"",
-        "comparison": "COMPARISON_LT",
-        "thresholdValue": 1,
-        "duration": "60s",
-        "aggregations": [
-          {
-            "alignmentPeriod": "60s",
-            "perSeriesAligner": "ALIGN_NEXT_OLDER"
-          }
-        ],
-        "trigger": {
-          "count": 1
-        }
-      }
-    }
-  ]
-}
-EOF_JSON
-
-UPTIME_POLICY_NAME="$(
-  api_post "${MONITORING_V3}/alertPolicies" /tmp/uptime-policy.json \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))'
-)" || true
-
-echo
-echo "Uptime check created."
-echo "Wait about 60-90 seconds for Monitoring to evaluate it."
-
+echo "Waiting 60 seconds for uptime check propagation..."
 sleep 60
 
 echo
 echo "============================================================"
-echo "TASK 5 COMPLETE"
+echo "TASK 5 READY"
 echo "Click Check my progress: Create uptime check"
 echo "============================================================"
-read -r -p "Press ENTER after the checkpoint passes..." _ < /dev/tty
+read -r -p "Press ENTER after Task 5 passes..." _ < /dev/tty
 
 # ============================================================
-# TASK 6 - DISABLE MY ALERT POLICY
+# TASK 6
 # ============================================================
 
 echo
 echo "[6/6] Disabling My Alert Policy..."
 
-cat > /tmp/disable-alert.json <<'JSON'
+cat >/tmp/disable.json <<'JSON'
 {
   "enabled": false
 }
@@ -483,19 +482,16 @@ JSON
 
 api_patch \
   "https://monitoring.googleapis.com/v3/${ALERT_POLICY_NAME}?updateMask=enabled" \
-  /tmp/disable-alert.json \
-  >/tmp/disabled-policy.json
+  /tmp/disable.json >/dev/null
 
 echo
 echo "============================================================"
 echo " CBL012 AUTOMATION COMPLETE"
 echo "============================================================"
-echo
-echo "Dashboard:            My Dashboard"
-echo "Chart:                My Chart"
-echo "Alert policy:         My Alert Policy"
-echo "Resource group:       VM instances"
-echo "Uptime check:         My Uptime check"
-echo "Notification channel: $EMAIL"
-echo "Alert status:         Disabled"
-echo
+echo "Dashboard:      My Dashboard"
+echo "Chart:          My Chart"
+echo "Alert policy:   My Alert Policy"
+echo "Group:          VM instances"
+echo "Uptime check:   My Uptime check"
+echo "Alert enabled:  false"
+echo "============================================================"
